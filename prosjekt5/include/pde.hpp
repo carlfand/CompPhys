@@ -8,7 +8,6 @@
 
 class Wave_fnc_system {
 	private:
-		arma::cx_mat density;		// Complex wave-function in 2 dimensions (N times N points).
 		arma::cx_vec probability_vec;	// Complex wave-function flattened into 1 dimesion (of length N²)
 		// arma::mat potential;		// Potential. Assumed to be real.
 		double h;					// Stepsize in spatial dimensions
@@ -34,6 +33,9 @@ class Wave_fnc_system {
 		// Constructor.
 		Wave_fnc_system(const arma::cx_mat& initial, const arma::mat& potential, const double h, const double delta_t);
 
+		// Copy-constructor
+		Wave_fnc_system(const Wave_fnc_system& initial);
+
 		// Converting index of type (i, j) into k. "Flattening the two dim array".
 		int multi_index_to_single(const int& i, const int& j);
 
@@ -54,7 +56,9 @@ class Wave_fnc_system {
 		// eps is the convergence criterion for Gauss-Seidel.
 		void time_evolution_gs(int n_steps, double eps=pow(10.0, -6), int max_it=100000);
 
-		arma::cx_vec time_step_gs(const arma::cx_vec& b);
+		void time_step_gs(double eps=pow(10.0, -6), int max_it=100000);
+
+		arma::cx_vec gs_iteration(const arma::cx_vec& b, const arma::cx_vec& u_0);
 
 		// Evolve density by one dt using Crank-Nicholson and Jacobi. This converges more slowly than Gauss-Seidel, but it is 
 		// readily parallelised.
@@ -67,10 +71,10 @@ class Wave_fnc_system {
 		// Use arma-functionality to solve A u ^ (n + 1) = B u ^ n.
 		void time_step_arma();
 
-		arma::cx_vec jacobi_iteration(const arma::cx_vec& b);
+		arma::cx_vec jacobi_iteration(const arma::cx_vec& b, const arma::cx_vec& u_0);
 
 		// Returns the flattened vector probability_vec on the shape of a N times N matrix. For writing to file.
-		arma::cx_mat prob_vec_to_matrix();
+		arma::cx_mat prob_vec_to_matrix() const;
 
 		// There is no need to work explicitly with the matrices B and A. But the problems forces us to construct them either way,
 		// so here we do so.
@@ -79,10 +83,10 @@ class Wave_fnc_system {
 		// As above.
 		arma::cx_mat A_mat();
 
-		arma::cx_mat A_mat_no_diag();
+		arma::sp_cx_mat A_mat_no_diag();
 
 		// Does the same as jacobi iteration, but uses matrix multiplication. Only used for testing on low-dimensional probability_vec.
-		arma::cx_vec jacobi_iteration_mat_mult(const arma::cx_vec& b);
+		arma::cx_vec jacobi_iteration_mat_mult(const arma::cx_vec& b, const arma::cx_vec& u_0);
 
 		// Trying to use Armadillo's sparse matrices.
 		arma::sp_cx_mat B_sp_mat();

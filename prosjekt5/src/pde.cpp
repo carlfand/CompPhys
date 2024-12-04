@@ -6,33 +6,51 @@
 
 #include "pde.hpp"
 
+//////////////////////////////////////////////////////////////////
+// Constructors and basic class methods
+
 Wave_fnc_system::Wave_fnc_system(const arma::cx_mat& initial, const arma::mat& potential, const double h, const double delta_t) {
 	// Constructor if Wave_fnc_system class. First, assigning a few values.
-	this->density = initial;
 	this->h = h;
 	this->delta_t = delta_t;
 	std::complex<double> imag(0.0, 1.0);
 	r = imag * delta_t / (2.0 * pow(h, 2));
-	N = density.n_rows;			// Assuming here square matrix, i.e. density.n_rows = density.n_cols.
+	N = initial.n_rows;			// Assuming here square matrix, i.e. initial.n_rows = initial.n_cols.
 	b_diag = arma::cx_vec(N * N);		// Constructing arma vector of correct size
 	a_diag_inv = arma::cx_vec(N * N);	// As above.
 	fill_diagonals(potential);			// Filling the arma vector accordingly	
 
-	probability_vec = arma::cx_vec(N * N);	// Initialising density vec of right size.
+	probability_vec = arma::cx_vec(N * N);	// Initialising probability_vec of right size.
 	fill_probability_vec(initial);			// Filling probability_vec as it should.
 
 	A_sp = A_sp_mat();
 	B_sp = B_sp_mat();
 }
 
+
+Wave_fnc_system::Wave_fnc_system(const Wave_fnc_system& initial) {
+	this->probability_vec = initial.probability_vec;
+	this->h = initial.h;
+	this->r = initial.r;		
+	this->delta_t = initial.delta_t;
+	this->N = initial.N;		
+	this->b_diag = initial.b_diag;
+	this->a_diag_inv = initial.a_diag_inv;
+	this->A_sp = initial.A_sp;		
+	this->B_sp = initial.B_sp;
+}
+
+
 int Wave_fnc_system::multi_index_to_single(const int& i, const int& j) {
 	// i and j runs from 0 to N-1. 
 	return i + j * (this->N);
 }
 
+
 std::pair<int, int> Wave_fnc_system::single_index_to_multi(const int& k) {
-	return {k % N, k / (N - 1)};
+	return {k % N, k };
 }
+
 
 void Wave_fnc_system::fill_diagonals(const arma::mat& potential) {
 	// Diagonal of B contains 1 - 4 r - i delta_t v_ij / 2
@@ -60,6 +78,7 @@ void Wave_fnc_system::fill_diagonals(const arma::mat& potential) {
 	}
 }
 
+
 void Wave_fnc_system::fill_probability_vec(const arma::cx_mat& initial) {
 	int k = 0;
 	for(int j = 0; j < N; j++) {
@@ -70,13 +89,16 @@ void Wave_fnc_system::fill_probability_vec(const arma::cx_mat& initial) {
 	}
 }
 
+
 std::ostream& operator<<(std::ostream& os, const Wave_fnc_system& prob) {
 	os << "B diagonal: \n" << prob.b_diag.t() << "A diagonal inverse: \n" << prob.a_diag_inv.t() << std::endl;
-	os << "u_ij = \n" << prob.density << std::endl;
-	os << "u_vec = \n" << prob.probability_vec.t() << std::endl;
+	os << "u_ij = \n" << prob.prob_vec_to_matrix() << std::endl;
+	// os << "u_vec = \n" << prob.probability_vec.t() << std::endl;
 	return os;
 }
 
+
+//////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////
 // Functionality for solving A u ^ (n + 1) = B u ^ n without in-built arma-solvers.
@@ -85,8 +107,7 @@ std::ostream& operator<<(std::ostream& os, const Wave_fnc_system& prob) {
 arma::cx_vec Wave_fnc_system::B_mat_times_u() {
 	// Calculating B u^n = b. (supress n from here)
 	// In component form: B_{lk} u_{k} = b_{l}.
-	// Consider b(l). l, k in {0, ..., N² - 1}. There are potentially five values the matrix-vector B_{l, k}u_k 
-	// multiplication might "hit":
+	// Consider b(l). l, k in {0, ..., N² - 1}. There are potentially five values the matrix-vector B_{l, k}u_{k} multiplication might "hit":
 	// 1) r at B_{k, k - N}, 
 	// 2) r at B_{k, k - 1}, 
 	// 3) b_diag(k) at B_{k, k} (this one is always hit), 
@@ -120,75 +141,59 @@ arma::cx_vec Wave_fnc_system::B_mat_times_u() {
 	return b;
 }
 
-
-void Wave_fnc_system::time_evolution_gs(int n_steps, double eps, int max_it) {
-	// Gauss-Seidel for solving A u^(n + 1) = B u^n = b.
-	// Calculating first B u = b.
-	arma::cx_vec b = B_mat_times_u();
-	arma::cx_vec u_next = time_step_gs(b);
-	double prob_norm = arma::norm(probability_vec, 2);
-	int it = 0;
-	while(arma::norm(u_next - probability_vec) / prob_norm && it < max_it) {
-		it += 1;
-		probability_vec = u_next;
-	}
-}
-
-arma::cx_vec Wave_fnc_system::time_step_gs(const arma::cx_vec& b) {
-	std::cout << "b.size() = " << b.size() << std::endl;
-	std::cout << "probability_vec.size() = " << probability_vec.size() << std::endl;
-	int N_square = N * N;
-	arma::cx_vec u_next(N_square);
-	u_next(0) = a_diag_inv(0) * (b(0) + r * (probability_vec(1) + probability_vec(N)));
-	for(int k = 1; k < N; k++) {
-		u_next(k) = a_diag_inv(k) * (b(k) + r * (u_next(k - 1) + probability_vec(k + 1) + probability_vec(k + N)));
-	}
-	u_next(N - 1) -= a_diag_inv(N - 1) * r * probability_vec(N);
-	for(int k = N; k < N_square - N; k++) {
-		// Need a number which is 0 when k = N * i - 1, 1 otherwise. Call this super_diag_nonzero.
-		// Need another number which is 0 when k = N * i, 1 otherwise. Call this sub_diag_nonzero.
-		bool super_diag_nonzero = (k + 1) % N;
-		bool sub_diag_nonzero = k % N;
-		std::complex<double> k_minus_1(u_next(k - 1).real() * sub_diag_nonzero, u_next(k - 1).imag() * sub_diag_nonzero);
-		std::complex<double> k_plus_1(probability_vec(k + 1).real() * super_diag_nonzero, probability_vec(k + 1).imag() * super_diag_nonzero);
-		u_next(k) = a_diag_inv(k) * (b(k) + r * (u_next(k - N) + k_minus_1 + k_plus_1 + probability_vec(k + N)));
-	}
-	u_next(N_square - N) = a_diag_inv(N_square - N) * (a_diag_inv(N_square - N) + r * (u_next(N_square - 2 * N) + probability_vec(N_square - N + 1)));
-	for(int k = N_square - N + 1; k < N_square - 1; k++) {
-		u_next(k) = a_diag_inv(k) * (b(k) + r * (u_next(k - N) + u_next(k - 1) + probability_vec(k + 1)));
-	}
-	u_next(N_square - 1) = a_diag_inv(N_square - 1) * (b(N_square - 1) + r * (u_next(N_square - 1 - N) + u_next(N_square - 2)));
-	return u_next;
-}
+//////////////////////////////////
+// Jacobi iteration method
 
 
-arma::cx_vec Wave_fnc_system::jacobi_iteration(const arma::cx_vec& b){
+arma::cx_vec Wave_fnc_system::jacobi_iteration(const arma::cx_vec& b, const arma::cx_vec& u_0){
 	// TODO: Legge til kommentar.
-	// Denne konvergerte ikke, men det er fordi den trengte en fix: Ta in probability_vec som argument og anvend den!
 	int N_square = N * N;
 	arma::cx_vec u_next(N_square);
 
-	u_next(0) = (b(0) + r * (probability_vec(1) + probability_vec(N))) * a_diag_inv(0);
+	u_next(0) = (b(0) + r * (u_0(1) + u_0(N))) * a_diag_inv(0);
 
 	// The biggest loop is here. Parallelising this.
 	//#pragma omp parallel
 	//{
 	//#pragma omp for
 	for(int k = N; k < N_square - N; k++){
-		u_next(k) = (b(k) + r * (probability_vec(k - N) + probability_vec(k - 1) + probability_vec(k + 1) + probability_vec(k + N))) * a_diag_inv(k);
+		u_next(k) = (b(k) + r * (u_0(k - N) + u_0(k - 1) + u_0(k + 1) + u_0(k + N))) * a_diag_inv(k);
 	}
 	//}
 
 	int help_int;
 	for(int k = 1; k < N; k++){
-		u_next(k) = (b(k) + r * (probability_vec(k - 1) + probability_vec(k + 1) + probability_vec(k + N))) * a_diag_inv(k);
+		u_next(k) = (b(k) + r * (u_0(k - 1) + u_0(k + 1) + u_0(k + N))) * a_diag_inv(k);
 		help_int = N_square - 1 - k;	// integer in [N_square - N, N_square - 2]
-		u_next(help_int) = (b(help_int) + r * (probability_vec(help_int - N) + probability_vec(help_int - 1) + probability_vec(help_int + 1))) * a_diag_inv(help_int);
-		u_next(N * k - 1) -= r * probability_vec(N * k) * a_diag_inv(N * k - 1);
-		u_next(N * k) -= r * probability_vec(N * k - 1) * a_diag_inv(N * k);
+		u_next(help_int) = (b(help_int) + r * (u_0(help_int - N) + u_0(help_int - 1) + u_0(help_int + 1))) * a_diag_inv(help_int);
+		u_next(N * k - 1) -= r * u_0(N * k) * a_diag_inv(N * k - 1);
+		u_next(N * k) -= r * u_0(N * k - 1) * a_diag_inv(N * k);
 	}
-	u_next(N_square - 1) = (b(N_square - 1) + r * (probability_vec(N_square - 2) + probability_vec(N_square - 1 - N))) * a_diag_inv(N_square - 1);
+	u_next(N_square - 1) = (b(N_square - 1) + r * (u_0(N_square - 2) + u_0(N_square - 1 - N))) * a_diag_inv(N_square - 1);
 	return u_next;
+}
+
+
+void Wave_fnc_system::time_step_jacobi(double eps, int max_it) {
+	int N_square = N * N;
+	arma::cx_vec b = B_mat_times_u();
+	arma::cx_vec u_0 = probability_vec;
+	arma::cx_vec u_next = jacobi_iteration(b, u_0);
+	// double prob_norm = arma::norm(u_0, 2);	// Using conventional 2-norm. Might use this as denominator to avoid many arma::norm() evaluations.
+	int it = 0;
+	while(arma::norm(u_0 - u_next, 2) / arma::norm(u_0, 2) > eps && it < max_it){
+		it += 1;
+		u_0 = u_next;
+		u_next = jacobi_iteration(b, u_0);
+	}
+	if(it == max_it){
+		std::cout << "Max iterations reached in Jacobi solver. Max iterations = " << max_it << std::endl;
+		throw std::runtime_error("Jacobi method did not converge!");
+	}
+	// For testing:
+	std::cout << "For eps = " << eps << ", time_step_jacobi converged after number of iterations it = " << it << std::endl;
+	// If the convergence criterion was met:
+	probability_vec = u_next;
 }
 
 
@@ -198,29 +203,78 @@ void Wave_fnc_system::time_evolution_jacobi(int n_steps, double eps, int max_it)
 	}
 }
 
-void Wave_fnc_system::time_step_jacobi(double eps, int max_it) {
+
+//////////////////////////////////
+
+//////////////////////////////////
+// Gauss-Seidel iteration method.
+
+
+arma::cx_vec Wave_fnc_system::gs_iteration(const arma::cx_vec& b, const arma::cx_vec& u_0) {
 	int N_square = N * N;
+	arma::cx_vec u_next(N_square);
+	u_next(0) = a_diag_inv(0) * (b(0) + r * (u_0(1) + u_0(N)));
+	for(int k = 1; k < N; k++) {
+		u_next(k) = a_diag_inv(k) * (b(k) + r * (u_next(k - 1) + u_0(k + 1) + u_0(k + N)));
+	}
+	u_next(N - 1) -= a_diag_inv(N - 1) * r * u_0(N);
+	for(int k = N; k < N_square - N; k++) {
+		// Need a number which is 0 when k = N * i - 1, 1 otherwise. Call this super_diag_nonzero. bool fits this purpose, as bool * double is defined as we want.
+		// Need another number which is 0 when k = N * i, 1 otherwise. Call this sub_diag_nonzero.
+		bool super_diag_nonzero = (k + 1) % N;
+		bool sub_diag_nonzero = k % N;
+		std::complex<double> k_minus_1(u_next(k - 1).real() * sub_diag_nonzero, u_next(k - 1).imag() * sub_diag_nonzero);
+		std::complex<double> k_plus_1(u_0(k + 1).real() * super_diag_nonzero, u_0(k + 1).imag() * super_diag_nonzero);
+		u_next(k) = a_diag_inv(k) * (b(k) + r * (u_next(k - N) + k_minus_1 + k_plus_1 + u_0(k + N)));
+	}
+	u_next(N_square - N) = a_diag_inv(N_square - N) * (a_diag_inv(N_square - N) + r * (u_next(N_square - 2 * N) + u_0(N_square - N + 1)));
+	for(int k = N_square - N + 1; k < N_square - 1; k++) {
+		u_next(k) = a_diag_inv(k) * (b(k) + r * (u_next(k - N) + u_next(k - 1) + u_0(k + 1)));
+	}
+	u_next(N_square - 1) = a_diag_inv(N_square - 1) * (b(N_square - 1) + r * (u_next(N_square - 1 - N) + u_next(N_square - 2)));
+	return u_next;
+}
+
+
+void Wave_fnc_system::time_step_gs(double eps, int max_it) {
+	// Gauss-Seidel for solving A u^(n + 1) = B u^n = b.
+	// Calculating first B u = b.
 	arma::cx_vec b = B_mat_times_u();
-	arma::cx_vec u_next = jacobi_iteration(b);
-	double prob_norm = arma::norm(probability_vec, 2);	// Using conventional 2-norm.
-	int iter = 0;
-	while(arma::norm(probability_vec - u_next, 2) / prob_norm > eps && iter < max_it){
-		iter += 1;
-		probability_vec = u_next;
-		b = B_mat_times_u();
-		u_next = jacobi_iteration(b);
+	arma::cx_vec u_0 = probability_vec;
+	arma::cx_vec u_next = gs_iteration(b, u_0);
+	// double prob_norm = arma::norm(u, 2); // Using this in denominator saves many evaluations of 1 / arma::norm().
+	int it = 0;
+	while(arma::norm(u_next - u_0, 2) / arma::norm(u_0, 2) && it < max_it) {
+		it += 1;
+		u_0 = u_next;
+		u_next = gs_iteration(b, u_0);
 	}
-	if(iter == max_it){
-		std::cout << "Max iterations reached in jacobi steps" << std::endl;
+	if(it == max_it){
+		std::cout << "Max iterations reached in Gauss-Seidel solver. Max iterations = " << max_it << std::endl;
+		throw std::runtime_error("Gauss-Seidel method did not converge!");
 	}
+	// For testing:
+	std::cout << "For eps = " << eps << ", time_step_gs converged after number of iterations it = " << it << std::endl;
+	// If the convergence criterion was met:
 	probability_vec = u_next;
 }
+
+
+void Wave_fnc_system::time_evolution_gs(int n_steps, double eps, int max_it) {
+	for(int i = 0; i < n_steps; i++) {
+		time_step_gs(eps, max_it);
+	}
+}
+
+//////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////
 // Matrix functionality from Armadillo
 
-arma::cx_vec Wave_fnc_system::jacobi_iteration_mat_mult(const arma::cx_vec& b) {
-	arma::cx_vec U_plus_L_dot_prob_vec_plus_b = b - A_mat_no_diag() * probability_vec;	// Note minus sign.
+arma::cx_vec Wave_fnc_system::jacobi_iteration_mat_mult(const arma::cx_vec& b, const arma::cx_vec& u_0) {
+	arma::cx_vec U_plus_L_dot_prob_vec_plus_b = b - A_mat_no_diag() * u_0;	// Note minus sign.
 	arma::cx_vec u_next(N * N);
 	for(int k = 0; k < N * N; k++) {
 		u_next(k) = a_diag_inv(k) * U_plus_L_dot_prob_vec_plus_b(k);
@@ -230,15 +284,16 @@ arma::cx_vec Wave_fnc_system::jacobi_iteration_mat_mult(const arma::cx_vec& b) {
 
 
 void Wave_fnc_system::time_step_arma() {
-	// Solving A 
-	arma::cx_vec b = B_sp * probability_vec;
-	probability_vec = arma::spsolve(A_sp, b);
+	// Solving A u^(n+1) = B u^n for u^(n+1).
+	arma::cx_vec b = B_sp * probability_vec;	// Calculating B u^n = b.
+	probability_vec = arma::spsolve(A_sp, b);	// Solving A u^(n+1) = b, and assigning the solution to probability_vec.
 }
 
 
 /////////////////////////////////////////////////////////////////////////////////
+//  Functionality for constructing various matrices (both of dense and sparse types)
 
-arma::cx_mat Wave_fnc_system::prob_vec_to_matrix() {
+arma::cx_mat Wave_fnc_system::prob_vec_to_matrix() const {
 	// Writing probability_vec to its matrix form.
 	arma::cx_mat prob_mat(N, N);
 	for(int k = 0; k < N * N; k++) {
@@ -313,10 +368,10 @@ arma::cx_mat Wave_fnc_system::B_mat() {
 }
 
 
-arma::cx_mat Wave_fnc_system::A_mat_no_diag(){
+arma::sp_cx_mat Wave_fnc_system::A_mat_no_diag(){
 	// For testing purposes.
 	int N_square = N * N;
-	arma::cx_mat A_no_diag(N_square, N_square);
+	arma::sp_cx_mat A_no_diag(N_square, N_square);
 	// Filling sub and superdiagonal
 	for(int k = 0; k < N_square - 1; k++){
 		A_no_diag(k, k + 1) = -r;
@@ -333,13 +388,4 @@ arma::cx_mat Wave_fnc_system::A_mat_no_diag(){
 		A_no_diag(k + N, k) = -r;
 	}
 	return A_no_diag;
-}
-
-
-//////////////////////////////////////////////////////////////
-// Overloading * operator for complex * bool
-
-std::complex<double> operator*(std::complex<double>& lhs, bool rhs) {
-	// double * bool is defined. complex * bool to work in the same way.
-	return std::complex<double>(rhs * lhs.real(), rhs * lhs.imag());
 }

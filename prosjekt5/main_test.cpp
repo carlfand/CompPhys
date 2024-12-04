@@ -55,8 +55,8 @@ int main() {
 	// Testing that Jacobi iteration behaves as expected
 	// 3x3 first
 	arma::cx_vec b = three_by_three.B_mat_times_u();
-	arma::cx_vec u_next = three_by_three.jacobi_iteration(b);
-	arma::cx_vec u_next_mat_mult = three_by_three.jacobi_iteration_mat_mult(b);
+	arma::cx_vec u_next = three_by_three.jacobi_iteration(b, three_by_three.get_u_vec());
+	arma::cx_vec u_next_mat_mult = three_by_three.jacobi_iteration_mat_mult(b, three_by_three.get_u_vec());
 	std::cout << "A_no_diag:\n" << three_by_three.A_mat_no_diag();
 	std::cout << "u_next:\n" << u_next.t();
 	std::cout << "u_next_mat_mult:\n" << u_next_mat_mult.t();
@@ -64,25 +64,34 @@ int main() {
 
 	// 4x4:
 	arma::cx_vec b_four = four_by_four.B_mat_times_u();
-	arma::cx_vec u_next_four = four_by_four.jacobi_iteration(b_four);
-	arma::cx_vec u_next_mat_mult_four = four_by_four.jacobi_iteration_mat_mult(b_four);
+	arma::cx_vec u_next_four = four_by_four.jacobi_iteration(b_four, four_by_four.get_u_vec());
+	arma::cx_vec u_next_mat_mult_four = four_by_four.jacobi_iteration_mat_mult(b_four, four_by_four.get_u_vec());
 	std::cout << "Difference between fast and mat mult jabcobi iteration, 4x4:\n" << (u_next_four - u_next_mat_mult_four).t();
 	// Behaviour as expected.
 
-	// Testing that jacobi method converges.
+	// Testing convergence of different equation solvers.
 	Wave_fnc_system four_by_four_small(M_four_by_four, M2_four_by_four, 0.001, 0.001);
-	print_sp_matrix_structure(four_by_four_small.B_sp_mat());
-	print_sp_matrix_structure(four_by_four_small.A_sp_mat());
-	arma::cx_vec u_next_small = four_by_four_small.time_step_gs(four_by_four_small.B_mat_times_u());
-	arma::cx_vec u_next_small_jac = four_by_four_small.jacobi_iteration(four_by_four_small.B_mat_times_u());
+	// print_sp_matrix_structure(four_by_four_small.B_sp_mat());
+	// print_sp_matrix_structure(four_by_four_small.A_sp_mat());
+	arma::cx_vec u_next_small = four_by_four_small.gs_iteration(four_by_four_small.B_mat_times_u(), four_by_four.get_u_vec());
+	arma::cx_vec u_next_small_jac = four_by_four_small.jacobi_iteration(four_by_four_small.B_mat_times_u(), four_by_four.get_u_vec());
 	std::cout << "2-norm of probability_vector: " << arma::norm(four_by_four_small.get_u_vec()) << std::endl;
 	std::cout << "2-norm of first gs attempt to solve A u^n+1 = b: " << arma::norm(u_next_small) << std::endl;
 	std::cout << "2-norm of first jacobi attempt to solve A u^n+1 = b: " << arma::norm(u_next_small_jac) << std::endl;
-	std::cout << four_by_four_small.prob_vec_to_matrix();
-	four_by_four_small.time_step_arma();
-	std::cout << four_by_four_small.prob_vec_to_matrix();
 
+	Wave_fnc_system four_by_four_small2(four_by_four_small);	// Making copy of four_by_four_small
+	Wave_fnc_system four_by_four_small3(four_by_four_small);	// Yet another copy
+	//std::cout << four_by_four_small.prob_vec_to_matrix();
+	four_by_four_small.time_step_arma();
 	// std::cout << four_by_four_small.prob_vec_to_matrix();
+	// std::cout << four_by_four_small2.prob_vec_to_matrix();
+	four_by_four_small2.time_step_jacobi(pow(10, -10), 1000);
+	// std::cout << four_by_four_small2.prob_vec_to_matrix();
+	// std::cout << four_by_four_small3.prob_vec_to_matrix();
+	four_by_four_small3.time_step_gs(pow(10, -10), 1000);
+	// std::cout << four_by_four_small3.prob_vec_to_matrix();
+	std::cout << "2-norm of the difference between the probability_vector after 1 step with arma::spsolve and the probability_vector after 1 step of Jacobi solver:\n" << arma::norm(four_by_four_small.get_u_vec() - four_by_four_small2.get_u_vec(), 2) << std::endl;
+	std::cout << "2-norm of the difference between the probability_vector after 1 step with arma::spsolve and the probability_vector after 1 step of Gauss-Seidel solver:\n" << arma::norm(four_by_four_small.get_u_vec() - four_by_four_small3.get_u_vec(), 2) << std::endl;
 	// four_by_four_small.time_step_jacobi(pow(10, -6), 1000);
 	// std::cout << four_by_four_small.prob_vec_to_matrix();
 
